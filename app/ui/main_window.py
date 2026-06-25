@@ -407,7 +407,11 @@ class MainWindow(QWidget):
             self.preview.setPlainText("-- 已到最后一段之后，可先按“上一段”回退。")
         else:
             self.progress_value.setText(f"{session.next_index + 1} / {total}")
-            self.preview.setPlainText(format_paragraph(session.output_units[session.next_index].text, session.comment_style))
+            preview_text = format_paragraph(
+                session.output_units[session.next_index].text,
+                session.comment_style,
+            )
+            self.preview.setPlainText(preview_text)
 
         self._set_chapter_options(session)
         self._apply_comment_style(session.comment_style)

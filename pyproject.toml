@@ -1,0 +1,23 @@
+[project]
+name = "paracomment"
+version = "0.1.0"
+description = "A Windows tray tool that pastes TXT passages as code comments."
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6>=6.7,<7",
+    "charset-normalizer>=3.3,<4",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["SLF001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

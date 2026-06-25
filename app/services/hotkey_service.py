@@ -451,7 +451,11 @@ class _HotkeyNativeEventFilter(QAbstractNativeEventFilter):
         self._service = service
 
     def nativeEventFilter(self, event_type, message):  # type: ignore[override]
-        event_name = event_type.decode("ascii", errors="ignore") if isinstance(event_type, (bytes, bytearray)) else str(event_type)
+        event_name = (
+            event_type.decode("ascii", errors="ignore")
+            if isinstance(event_type, (bytes, bytearray))
+            else str(event_type)
+        )
         if event_name not in {"windows_generic_MSG", "windows_dispatcher_MSG"}:
             return False, 0
 

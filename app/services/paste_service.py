@@ -9,6 +9,7 @@ from ctypes import wintypes
 from PySide6.QtCore import QMimeData
 from PySide6.QtWidgets import QApplication
 
+from app.models import PasteOutcome
 from app.services.debug_logger import DebugLogger
 
 CTRL_V = 0x56
@@ -96,7 +97,7 @@ class PasteService:
     def set_restore_clipboard_after_paste(self, enabled: bool) -> None:
         self._restore_clipboard_after_paste = bool(enabled)
 
-    def paste_text(self, text: str) -> None:
+    def paste_text(self, text: str) -> PasteOutcome:
         foreground_before = self._foreground_window_snapshot()
         self._log(
             "paste.start",
@@ -105,7 +106,9 @@ class PasteService:
             foreground=foreground_before,
         )
         clipboard = QApplication.clipboard()
-        previous_clipboard_data = _clone_clipboard_data(clipboard.mimeData()) if self._restore_clipboard_after_paste else None
+        previous_clipboard_data = (
+            _clone_clipboard_data(clipboard.mimeData()) if self._restore_clipboard_after_paste else None
+        )
         clipboard.setText(text)
         QApplication.processEvents()
         self._log("paste.clipboard.updated", text_length=len(text))
@@ -113,14 +116,23 @@ class PasteService:
         send_result = self._send_ctrl_combo(CTRL_V)
         self._restore_clipboard_if_needed(previous_clipboard_data)
         foreground_after = self._foreground_window_snapshot()
-        self._log("paste.completed", send_result=send_result, foreground=foreground_after)
+        inserted = self._send_succeeded(send_result)
+        self._log("paste.completed", success=inserted, send_result=send_result, foreground=foreground_after)
+        return PasteOutcome(inserted=inserted)
 
-    def undo_last_paste(self) -> None:
+    def undo_last_paste(self) -> bool:
         self._log("paste.undo.start", foreground=self._foreground_window_snapshot())
         send_result = self._send_ctrl_combo(CTRL_Z)
-        self._log("paste.undo.completed", send_result=send_result, foreground=self._foreground_window_snapshot())
+        success = self._send_succeeded(send_result)
+        self._log(
+            "paste.undo.completed",
+            success=success,
+            send_result=send_result,
+            foreground=self._foreground_window_snapshot(),
+        )
+        return success
 
-    def replace_text(self, text: str) -> None:
+    def replace_text(self, text: str) -> PasteOutcome:
         foreground_before = self._foreground_window_snapshot()
         self._log(
             "paste.replace.start",
@@ -129,7 +141,9 @@ class PasteService:
             foreground=foreground_before,
         )
         clipboard = QApplication.clipboard()
-        previous_clipboard_data = _clone_clipboard_data(clipboard.mimeData()) if self._restore_clipboard_after_paste else None
+        previous_clipboard_data = (
+            _clone_clipboard_data(clipboard.mimeData()) if self._restore_clipboard_after_paste else None
+        )
         clipboard.setText(text)
         QApplication.processEvents()
         self._log("paste.clipboard.updated", text_length=len(text))
@@ -140,14 +154,20 @@ class PasteService:
         time.sleep(REPLACE_UNDO_SETTLE_SECONDS)
         paste_result = self._send_ctrl_combo(CTRL_V)
         self._restore_clipboard_if_needed(previous_clipboard_data)
+        previous_removed = self._send_succeeded(undo_result)
+        inserted = self._send_succeeded(paste_result)
 
         self._log(
             "paste.replace.completed",
+            success=inserted and previous_removed,
+            inserted=inserted,
+            previous_removed=previous_removed,
             undo_result=undo_result,
             paste_result=paste_result,
             foreground=self._foreground_window_snapshot(),
             foreground_before=foreground_before,
         )
+        return PasteOutcome(inserted=inserted, previous_removed=previous_removed)
 
     def _send_ctrl_combo(self, vk_code: int) -> dict[str, object]:
         input_items = self._active_modifier_keyups()
@@ -206,6 +226,12 @@ class PasteService:
     def _log(self, event: str, **fields: object) -> None:
         if self._logger:
             self._logger.log(event, **fields)
+
+    @staticmethod
+    def _send_succeeded(result: dict[str, object]) -> bool:
+        requested = result.get("requested")
+        sent = result.get("sent")
+        return isinstance(requested, int) and requested > 0 and sent == requested
 
     @staticmethod
     def _foreground_window_snapshot() -> dict[str, int | str]:

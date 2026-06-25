@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from app.config import DEFAULT_HOTKEYS, HOTKEY_IDS, MOD_ALT, MOD_CONTROL, MOD_SHIFT
 from app.models import HotkeySpec, HotkeyTriggerKind

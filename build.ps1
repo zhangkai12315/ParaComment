@@ -11,3 +11,7 @@ $ErrorActionPreference = "Stop"
     --windowed `
     --name ParaComment `
     app/main.py
+
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}

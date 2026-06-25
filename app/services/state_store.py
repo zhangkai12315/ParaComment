@@ -213,7 +213,9 @@ def _updated_recent_files(value: object, path: str | Path, limit: int = 12) -> l
     result = [normalized_path]
     for item in existing:
         item_path = str(item)
-        if item_path and os.path.normcase(os.path.abspath(item_path)) != os.path.normcase(os.path.abspath(normalized_path)):
+        item_key = os.path.normcase(os.path.abspath(item_path))
+        normalized_key = os.path.normcase(os.path.abspath(normalized_path))
+        if item_path and item_key != normalized_key:
             result.append(item_path)
         if len(result) >= limit:
             break

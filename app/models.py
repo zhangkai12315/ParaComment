@@ -65,6 +65,18 @@ class HotkeySpec:
     display: str
 
 
+@dataclass(frozen=True, slots=True)
+class PasteOutcome:
+    """Result of inserting text, optionally after removing previous text."""
+
+    inserted: bool
+    previous_removed: bool | None = None
+
+    @property
+    def fully_succeeded(self) -> bool:
+        return self.inserted and self.previous_removed is not False
+
+
 @dataclass(slots=True)
 class SessionState:
     """In-memory runtime session."""

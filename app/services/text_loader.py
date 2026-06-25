@@ -7,7 +7,6 @@ from pathlib import Path
 
 from charset_normalizer import from_bytes
 
-from app.config import DEFAULT_SMART_CHUNK_LENGTH
 from app.models import ChapterInfo, LoadedText, OutputMode, OutputUnit
 
 UTF8_BOM = b"\xef\xbb\xbf"

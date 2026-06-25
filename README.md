@@ -43,7 +43,7 @@ ParaComment 提供一个简单 GUI，用于选择 TXT 文件、查看当前文�
 python -m venv .venv
 .\.venv\Scripts\activate
 python -m pip install -r requirements.txt
-python app/main.py
+python -m app
 ```
 
 依赖如下：
@@ -51,7 +51,12 @@ python app/main.py
 ```text
 PySide6
 charset-normalizer
-pyinstaller
+```
+
+开发、测试和打包时安装：
+
+```powershell
+python -m pip install -r requirements-dev.txt
 ```
 
 ## 打包 exe
@@ -178,6 +183,12 @@ ParaComment/
 
 ```powershell
 python -m unittest discover -s tests -v
+```
+
+运行静态检查：
+
+```powershell
+python -m ruff check app tests
 ```
 
 ## 兼容性说明

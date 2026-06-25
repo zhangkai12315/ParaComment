@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication
 
 from app import __version__
 from app.hotkeys import build_hotkey_specs, default_hotkey_specs, find_duplicate_hotkeys, find_hotkey_warnings
-from app.models import HotkeySpec, OutputUnit, PasteMode, SessionState
+from app.models import HotkeySpec, OutputUnit, PasteOutcome, SessionState
 from app.services.debug_logger import DebugLogger
 from app.services.hotkey_service import HotkeyService
 from app.services.paste_service import PasteService
@@ -129,7 +129,8 @@ class ParaCommentController:
             paste_mode=self.session.paste_mode,
         )
         self.window.set_status(
-            f"已加载 {document.path.name}，识别编码 {document.encoding}，共 {self.session.total_units} 个输出片段，识别到 {len(self.session.chapters)} 个章节。"
+            f"已加载 {document.path.name}，识别编码 {document.encoding}，"
+            f"共 {self.session.total_units} 个输出片段，识别到 {len(self.session.chapters)} 个章节。"
         )
 
     def paste_next(self) -> None:
@@ -151,14 +152,26 @@ class ParaCommentController:
             self.window.set_session(self.session)
             return
 
+        outcome: PasteOutcome
         replaced_current = False
         if self.session.paste_mode == "browse" and self.session.paste_history:
             current_index = self.session.next_index
-            self._replace_paste_index(current_index)
+            outcome = self._replace_paste_index(current_index)
             replaced_current = True
         else:
             current_index = self.session.next_index
-            self._paste_index(current_index)
+            outcome = self._paste_index(current_index)
+
+        if not outcome.inserted:
+            self.debug_logger.log(
+                "controller.paste_next.failed",
+                pasted_index=current_index,
+                replaced_current=replaced_current,
+                previous_removed=outcome.previous_removed,
+            )
+            self.window.set_status("粘贴失败，阅读进度未更新。请确认目标编辑器处于前台后重试。")
+            return
+
         self._persist_session()
         self.window.set_session(self.session)
         self.debug_logger.log(
@@ -167,7 +180,11 @@ class ParaCommentController:
             next_index=self.session.next_index,
             replaced_current=replaced_current,
         )
-        if self.session.paste_mode == "browse":
+        if replaced_current and outcome.previous_removed is False:
+            self.window.set_status(
+                f"第 {current_index + 1} 个片段已粘贴，但未能撤销上一片段；请检查编辑器内容。"
+            )
+        elif self.session.paste_mode == "browse":
             self.window.set_status(f"已切换到第 {current_index + 1} 个片段。")
         else:
             self.window.set_status(f"已输出第 {current_index + 1} 个片段。")
@@ -190,7 +207,10 @@ class ParaCommentController:
                 return
 
             target_index = current_index - 1
-            self._replace_paste_index(target_index)
+            outcome = self._replace_paste_index(target_index)
+            if not outcome.inserted:
+                self.window.set_status("粘贴失败，当前位置未更新。请确认目标编辑器处于前台后重试。")
+                return
             self._persist_session()
             self.window.set_session(self.session)
             self.debug_logger.log(
@@ -199,7 +219,12 @@ class ParaCommentController:
                 pasted_index=target_index,
                 replaced_current=True,
             )
-            self.window.set_status(f"已切换到第 {target_index + 1} 个片段。")
+            if outcome.previous_removed is False:
+                self.window.set_status(
+                    f"第 {target_index + 1} 个片段已粘贴，但未能撤销上一片段；请检查编辑器内容。"
+                )
+            else:
+                self.window.set_status(f"已切换到第 {target_index + 1} 个片段。")
             return
 
         if self.session.next_index <= 0:
@@ -208,7 +233,10 @@ class ParaCommentController:
 
         target_index = self.session.next_index - 1
         if self.session.paste_mode == "browse":
-            self._paste_index(target_index)
+            outcome = self._paste_index(target_index)
+            if not outcome.inserted:
+                self.window.set_status("粘贴失败，当前位置未更新。请确认目标编辑器处于前台后重试。")
+                return
             self._persist_session()
             self.window.set_session(self.session)
             self.debug_logger.log(
@@ -236,9 +264,12 @@ class ParaCommentController:
             self.window.set_status("当前会话里没有可撤销的工具粘贴记录。")
             return
 
-        last_index = self._undo_tracked_paste(reset_next_index=True)
-        if last_index is None:
+        last_index, attempted = self._undo_tracked_paste(reset_next_index=True)
+        if not attempted:
             self.window.set_status("当前会话里没有可撤销的工具粘贴记录。")
+            return
+        if last_index is None:
+            self.window.set_status("撤销命令发送失败，阅读进度未更新。请确认目标编辑器处于前台后重试。")
             return
 
         self._persist_session()
@@ -462,11 +493,8 @@ class ParaCommentController:
         else:
             self.session.next_index = self._find_unit_index(anchor)
 
-        self.session.paste_history = [
-            index for index in self.session.paste_history if 0 <= index < len(self.session.output_units)
-        ]
-        if self.session.paste_mode == "browse" and len(self.session.paste_history) > 1:
-            self.session.paste_history = self.session.paste_history[-1:]
+        if preserve_position:
+            self.session.paste_history.clear()
 
     def _find_unit_index(self, anchor: OutputUnit) -> int:
         same_paragraph = [
@@ -533,7 +561,7 @@ class ParaCommentController:
 
         return None
 
-    def _paste_index(self, index: int) -> None:
+    def _paste_index(self, index: int) -> PasteOutcome:
         unit = self.session.output_units[index]
         formatted = format_paragraph(unit.text, self.session.comment_style)
         self.debug_logger.log(
@@ -544,17 +572,20 @@ class ParaCommentController:
             preview=formatted[:120],
             paste_mode=self.session.paste_mode,
         )
-        self.paste_service.paste_text(formatted)
+        outcome = self.paste_service.paste_text(formatted)
+        if not outcome.inserted:
+            return outcome
         if self.session.paste_mode == "browse":
             self.session.paste_history = [index]
         else:
             self.session.paste_history.append(index)
         self.session.next_index = index + 1
+        return outcome
 
-    def _replace_paste_index(self, index: int) -> None:
+    def _replace_paste_index(self, index: int) -> PasteOutcome:
         unit = self.session.output_units[index]
         formatted = format_paragraph(unit.text, self.session.comment_style)
-        previous_index = self.session.paste_history.pop() if self.session.paste_history else None
+        previous_index = self.session.paste_history[-1] if self.session.paste_history else None
         self.debug_logger.log(
             "controller.paste_replace.executing",
             previous_index=previous_index,
@@ -564,25 +595,31 @@ class ParaCommentController:
             preview=formatted[:120],
             paste_mode=self.session.paste_mode,
         )
-        self.paste_service.replace_text(formatted)
+        outcome = self.paste_service.replace_text(formatted)
+        if not outcome.inserted:
+            return outcome
         self.session.paste_history = [index]
         self.session.next_index = index + 1
+        return outcome
 
-    def _undo_tracked_paste(self, reset_next_index: bool) -> int | None:
+    def _undo_tracked_paste(self, reset_next_index: bool) -> tuple[int | None, bool]:
         if not self.session.paste_history:
-            return None
+            return None, False
 
-        last_index = self.session.paste_history.pop()
+        last_index = self.session.paste_history[-1]
         self.debug_logger.log(
             "controller.undo.executing",
             last_index=last_index,
             reset_next_index=reset_next_index,
             paste_mode=self.session.paste_mode,
         )
-        self.paste_service.undo_last_paste()
+        if not self.paste_service.undo_last_paste():
+            self.debug_logger.log("controller.undo.failed", last_index=last_index)
+            return None, True
+        self.session.paste_history.pop()
         if reset_next_index:
             self.session.next_index = last_index
-        return last_index
+        return last_index, True
 
     def _pause_hotkeys_for_capture(self) -> None:
         if self._hotkeys_paused_for_capture:
